@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>YT Transcriber</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,300&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0d0d0d; --surface: #141414; --surface2: #1a1a1a;
+    --border: #2a2a2a; --border-active: #444;
+    --text: #e8e8e2; --text-muted: #666; --text-dim: #444;
+    --accent: #c8f060; --accent-dim: rgba(200,240,96,0.12); --accent-border: rgba(200,240,96,0.3);
+    --red: #ff5f57; --mono: 'DM Mono', monospace; --sans: 'DM Sans', sans-serif;
+  }
+  html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--sans); font-weight: 300; -webkit-font-smoothing: antialiased; }
+  body { display: grid; place-items: center; min-height: 100vh; padding: 2rem 1rem; }
+  .wrap { width: 100%; max-width: 580px; }
+  .wordmark { font-family: var(--mono); font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 3rem; display: flex; align-items: center; gap: 10px; }
+  .wordmark::before { content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: pulse 2.4s ease-in-out infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(0.7); } }
+  h1 { font-size: clamp(2rem, 5vw, 3.2rem); font-weight: 300; line-height: 1.1; letter-spacing: -0.02em; margin-bottom: 0.4rem; }
+  h1 em { font-style: normal; color: var(--accent); }
+  .sub { font-size: 14px; color: var(--text-muted); margin-bottom: 2.5rem; line-height: 1.6; }
+  .input-row { display: flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; transition: border-color 0.2s; background: var(--surface); }
+  .input-row:focus-within { border-color: var(--accent-border); box-shadow: 0 0 0 3px var(--accent-dim); }
+  .url-input { flex: 1; background: transparent; border: none; outline: none; padding: 14px 16px; font-family: var(--mono); font-size: 13px; font-weight: 300; color: var(--text); }
+  .url-input::placeholder { color: var(--text-dim); }
+  .submit-btn { background: var(--accent); color: #0d0d0d; border: none; padding: 14px 20px; font-family: var(--mono); font-size: 12px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; cursor: pointer; transition: background 0.15s, transform 0.1s; white-space: nowrap; }
+  .submit-btn:hover { background: #d4f570; }
+  .submit-btn:active { transform: scale(0.98); }
+  .submit-btn:disabled { background: var(--border); color: var(--text-dim); cursor: not-allowed; transform: none; }
+  .pipeline { margin-top: 2rem; display: none; }
+  .pipeline.visible { display: block; }
+  .pipeline-label { font-family: var(--mono); font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-dim); margin-bottom: 1rem; }
+  .steps { display: flex; flex-direction: column; gap: 2px; }
+  .step { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 4px; border: 1px solid transparent; transition: all 0.3s ease; }
+  .step.idle { opacity: 0.35; }
+  .step.active { border-color: var(--accent-border); background: var(--accent-dim); opacity: 1; }
+  .step.done { opacity: 0.7; }
+  .step.error { border-color: rgba(255,95,87,0.3); background: rgba(255,95,87,0.08); opacity: 1; }
+  .step-icon { width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 10px; font-family: var(--mono); flex-shrink: 0; border: 1px solid var(--border); color: var(--text-muted); }
+  .step.active .step-icon { border-color: var(--accent); color: var(--accent); animation: spin-ring 1.2s linear infinite; }
+  @keyframes spin-ring { from { box-shadow: 0 0 0 1px var(--accent-dim); } 50% { box-shadow: 0 0 0 3px var(--accent-dim); } to { box-shadow: 0 0 0 1px var(--accent-dim); } }
+  .step.done .step-icon { border-color: var(--accent); color: var(--accent); }
+  .step.error .step-icon { border-color: var(--red); color: var(--red); }
+  .step-label { font-size: 13px; color: var(--text-muted); font-weight: 300; }
+  .step.active .step-label, .step.done .step-label { color: var(--text); }
+  .step.error .step-label { color: var(--red); }
+  .step-time { margin-left: auto; font-family: var(--mono); font-size: 10px; color: var(--text-dim); }
+  .result { margin-top: 2rem; padding: 1.5rem; border: 1px solid var(--accent-border); border-radius: 6px; background: var(--accent-dim); display: none; animation: slideUp 0.4s ease; }
+  .result.visible { display: block; }
+  @keyframes slideUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+  .result-title { font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.14em; color: var(--accent); margin-bottom: 4px; }
+  .result-video-title { font-size: 15px; font-weight: 400; color: var(--text); margin-bottom: 1rem; line-height: 1.4; }
+  .file-links { display: flex; flex-direction: column; gap: 6px; }
+  .file-link { display: flex; align-items: center; gap: 8px; text-decoration: none; color: var(--text-muted); font-family: var(--mono); font-size: 12px; padding: 8px 10px; border-radius: 4px; border: 1px solid var(--border); background: var(--surface2); transition: all 0.15s; }
+  .file-link:hover { border-color: var(--accent-border); color: var(--accent); background: var(--accent-dim); }
+  .error-msg { margin-top: 1rem; padding: 12px 14px; border: 1px solid rgba(255,95,87,0.3); border-radius: 4px; background: rgba(255,95,87,0.08); font-family: var(--mono); font-size: 12px; color: var(--red); display: none; }
+  .error-msg.visible { display: block; }
+  .new-btn { margin-top: 1rem; background: transparent; border: 1px solid var(--border); color: var(--text-muted); padding: 9px 16px; border-radius: 4px; font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; cursor: pointer; transition: all 0.15s; }
+  .new-btn:hover { border-color: var(--accent-border); color: var(--accent); }
+  .footer { margin-top: 3rem; font-family: var(--mono); font-size: 10px; color: var(--text-dim); letter-spacing: 0.06em; display: flex; gap: 1.5rem; }
+  .footer span::before { content: '→ '; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="wordmark">YT Transcriber</div>
+  <h1>Extract.<br><em>Transcribe.</em><br>Archive.</h1>
+  <p class="sub">Paste a YouTube URL. Get a full transcript, speaker turns, key insights, and winning quotes — committed to GitHub.</p>
+  <div class="input-row">
+    <input class="url-input" id="urlInput" type="url" placeholder="https://youtube.com/watch?v=..." autocomplete="off" spellcheck="false" />
+    <button class="submit-btn" id="submitBtn" onclick="startTranscription()">Run →</button>
+  </div>
+  <div class="error-msg" id="errorMsg"></div>
+  <div class="pipeline" id="pipeline">
+    <div class="pipeline-label">Pipeline</div>
+    <div class="steps" id="steps">
+      <div class="step idle" id="step-fetch"><div class="step-icon">1</div><span class="step-label">Fetching video info + audio</span><span class="step-time" id="time-fetch"></span></div>
+      <div class="step idle" id="step-upload"><div class="step-icon">2</div><span class="step-label">Uploading MP3 to GitHub</span><span class="step-time" id="time-upload"></span></div>
+      <div class="step idle" id="step-transcribe"><div class="step-icon">3</div><span class="step-label">Transcribing via Fireflies</span><span class="step-time" id="time-transcribe"></span></div>
+      <div class="step idle" id="step-insights"><div class="step-icon">4</div><span class="step-label">Extracting insights + quotes</span><span class="step-time" id="time-insights"></span></div>
+      <div class="step idle" id="step-commit"><div class="step-icon">5</div><span class="step-label">Committing files to repo</span><span class="step-time" id="time-commit"></span></div>
+    </div>
+  </div>
+  <div class="result" id="result">
+    <div class="result-title">Complete</div>
+    <div class="result-video-title" id="resultTitle"></div>
+    <div class="file-links" id="fileLinks"></div>
+    <button class="new-btn" onclick="reset()">+ New transcript</button>
+  </div>
+  <div class="footer"><span>mp3 + transcript.md</span><span>summary.md</span><span>metadata.json</span></div>
+</div>
+<script>
+  const N8N_WEBHOOK = 'https://n8n-j39n.sliplane.app/webhook/yt-transcriber';
+  const STEPS = ['fetch','upload','transcribe','insights','commit'];
+  const STEP_DURATIONS = [30,15,300,20,10];
+  let stepTimers = {}, stepStartTimes = {};
+  function setStep(id, state) {
+    const el = document.getElementById('step-' + id);
+    if (!el) return;
+    el.className = 'step ' + state;
+    const icon = el.querySelector('.step-icon');
+    if (state === 'done') icon.textContent = '✓';
+    else if (state === 'error') icon.textContent = '✕';
+    else icon.textContent = STEPS.indexOf(id) + 1;
+  }
+  function tickTime(id) {
+    stepStartTimes[id] = Date.now();
+    stepTimers[id] = setInterval(() => {
+      const el = document.getElementById('time-' + id);
+      if (el) el.textContent = ((Date.now() - stepStartTimes[id]) / 1000).toFixed(0) + 's';
+    }, 500);
+  }
+  function stopTime(id) { clearInterval(stepTimers[id]); }
+  function simulatePipeline() {
+    let delay = 0;
+    STEPS.forEach((step, i) => {
+      setTimeout(() => {
+        if (i > 0) { setStep(STEPS[i-1], 'done'); stopTime(STEPS[i-1]); }
+        setStep(step, 'active'); tickTime(step);
+      }, delay * 1000);
+      delay += STEP_DURATIONS[i];
+    });
+  }
+  async function startTranscription() {
+    const url = document.getElementById('urlInput').value.trim();
+    const errorEl = document.getElementById('errorMsg');
+    errorEl.className = 'error-msg';
+    if (!url || (!url.includes('youtube.com') && !url.includes('youtu.be'))) {
+      errorEl.textContent = 'needs a valid youtube.com or youtu.be URL';
+      errorEl.className = 'error-msg visible'; return;
+    }
+    document.getElementById('submitBtn').disabled = true;
+    document.getElementById('urlInput').disabled = true;
+    document.getElementById('pipeline').className = 'pipeline visible';
+    document.getElementById('result').className = 'result';
+    simulatePipeline();
+    try {
+      const res = await fetch(N8N_WEBHOOK, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) });
+      Object.values(stepTimers).forEach(clearInterval);
+      STEPS.forEach(s => { stopTime(s); setStep(s, 'idle'); });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || `Server error ${res.status}`);
+      STEPS.forEach(s => setStep(s, 'done'));
+      document.getElementById('resultTitle').textContent = data.message?.replace('Transcription complete for: ', '') || '';
+      const linkDefs = [{key:'transcript',label:'transcript.md',icon:'📄'},{key:'summary',label:'summary.md',icon:'✦'},{key:'metadata',label:'metadata.json',icon:'{}'},{key:'audio',label:'audio.mp3',icon:'♫'}];
+      const container = document.getElementById('fileLinks');
+      container.innerHTML = '';
+      linkDefs.forEach(({ key, label, icon }) => {
+        if (data.files?.[key]) {
+          const a = document.createElement('a');
+          a.href = data.files[key]; a.target = '_blank'; a.rel = 'noopener'; a.className = 'file-link';
+          a.innerHTML = `<span style="font-size:14px;opacity:0.7">${icon}</span><span>${label}</span><span style="margin-left:auto;opacity:0.4;font-size:10px">github ↗</span>`;
+          container.appendChild(a);
+        }
+      });
+      document.getElementById('result').className = 'result visible';
+    } catch (err) {
+      Object.values(stepTimers).forEach(clearInterval);
+      STEPS.forEach(s => stopTime(s));
+      const activeStep = STEPS.find(s => document.getElementById('step-' + s)?.className.includes('active'));
+      if (activeStep) setStep(activeStep, 'error');
+      errorEl.textContent = err.message || 'Something went wrong. Check n8n logs.';
+      errorEl.className = 'error-msg visible';
+      document.getElementById('submitBtn').disabled = false;
+      document.getElementById('urlInput').disabled = false;
+    }
+  }
+  function reset() {
+    document.getElementById('urlInput').value = '';
+    document.getElementById('urlInput').disabled = false;
+    document.getElementById('submitBtn').disabled = false;
+    document.getElementById('pipeline').className = 'pipeline';
+    document.getElementById('result').className = 'result';
+    document.getElementById('errorMsg').className = 'error-msg';
+    STEPS.forEach(s => { setStep(s, 'idle'); document.getElementById('time-' + s).textContent = ''; });
+    Object.values(stepTimers).forEach(clearInterval);
+    stepTimers = {}; stepStartTimes = {};
+  }
+  document.getElementById('urlInput').addEventListener('keydown', e => { if (e.key === 'Enter') startTranscription(); });
+</script>
+</body>
+</html>

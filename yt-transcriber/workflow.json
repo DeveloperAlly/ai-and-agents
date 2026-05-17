@@ -1,0 +1,292 @@
+{
+  "name": "YouTube Transcriber",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "yt-transcriber",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "1",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const url = $input.first().json.body?.url || $input.first().json.url;\nif (!url || !url.includes('youtube.com') && !url.includes('youtu.be')) {\n  throw new Error('Invalid YouTube URL');\n}\nreturn [{ json: { url } }];"
+      },
+      "id": "2",
+      "name": "Validate URL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "operation": "getVideoInfo",
+        "url": "={{ $json.url }}"
+      },
+      "id": "3",
+      "name": "Get Video Info",
+      "type": "n8n-nodes-youtube-dl.youtubeDl",
+      "typeVersion": 1,
+      "position": [400, 300]
+    },
+    {
+      "parameters": {
+        "operation": "downloadAudio",
+        "url": "={{ $('Validate URL').first().json.url }}",
+        "audioFormat": "mp3",
+        "audioQuality": "192"
+      },
+      "id": "4",
+      "name": "Download MP3",
+      "type": "n8n-nodes-youtube-dl.youtubeDl",
+      "typeVersion": 1,
+      "position": [600, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const info = $('Get Video Info').first().json;\nconst title = info.title || 'untitled';\nconst slug = title.toLowerCase().replace(/[^a-z0-9\\s-]/g, '').replace(/\\s+/g, '-').substring(0, 60);\nconst date = new Date().toISOString().split('T')[0];\nconst folderName = `${date}_${slug}`;\nreturn [{ json: {\n  folderName, slug, date,\n  metadata: {\n    title: title.replace(/'/g, \"'\"),\n    channel: info.channel || info.uploader || '',\n    channelUrl: info.channel_url || info.uploader_url || '',\n    publishDate: info.upload_date || '',\n    duration: info.duration || 0,\n    durationFormatted: new Date((info.duration || 0) * 1000).toISOString().substr(11, 8),\n    description: (info.description || '').substring(0, 1000),\n    viewCount: info.view_count || 0,\n    youtubeUrl: $('Validate URL').first().json.url,\n    thumbnailUrl: info.thumbnail || ''\n  }\n}}];"
+      },
+      "id": "5",
+      "name": "Build Metadata",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [800, 200]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://api.github.com/repos/DeveloperAlly/ai-and-agents/contents/transcripts/{{ $('Build Metadata').first().json.folderName }}/audio.mp3",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Accept", "value": "application/vnd.github+json" },
+            { "name": "X-GitHub-Api-Version", "value": "2022-11-28" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={ \"message\": \"feat: add audio for {{ $('Build Metadata').first().json.metadata.title }}\", \"content\": \"{{ $('Download MP3').first().binary.data.data }}\" }"
+      },
+      "id": "6",
+      "name": "Upload MP3 to GitHub",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1000, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.fireflies.ai/graphql",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={ \"query\": \"mutation($input: AudioUploadInput) { uploadAudio(input: $input) { success title id } }\", \"variables\": { \"input\": { \"url\": \"https://raw.githubusercontent.com/DeveloperAlly/ai-and-agents/main/transcripts/{{ $('Build Metadata').first().json.folderName }}/audio.mp3\", \"title\": \"{{ $('Build Metadata').first().json.metadata.title }}\", \"attendees\": [{\"displayName\": \"{{ $('Build Metadata').first().json.metadata.channel }}\", \"email\": \"channel@youtube.com\"}] } } }"
+      },
+      "id": "7",
+      "name": "Submit to Fireflies",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1200, 200]
+    },
+    {
+      "parameters": {
+        "amount": 300,
+        "unit": "seconds"
+      },
+      "id": "8",
+      "name": "Wait for Transcription",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [1400, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.fireflies.ai/graphql",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={ \"query\": \"query Transcript($id: String!) { transcript(id: $id) { id title date sentences { index speaker_name text start_time end_time } summary { overview bullet_gist keywords action_items short_summary } } }\", \"variables\": { \"id\": \"{{ $('Submit to Fireflies').first().json.data.uploadAudio.id }}\" } }"
+      },
+      "id": "9",
+      "name": "Fetch Transcript",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1600, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "const transcript = $('Fetch Transcript').first().json.data?.transcript;\nconst meta = $('Build Metadata').first().json.metadata;\nconst folderName = $('Build Metadata').first().json.folderName;\nif (!transcript) throw new Error('Transcript not ready — increase wait time');\nconst sentences = transcript.sentences || [];\nconst formatTime = (ms) => {\n  const totalSec = Math.floor((ms || 0) / 1000);\n  const h = Math.floor(totalSec / 3600);\n  const m = Math.floor((totalSec % 3600) / 60);\n  const s = totalSec % 60;\n  return h > 0 ? `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}` : `${m}:${String(s).padStart(2,'0')}`;\n};\nlet body = '';\nlet curSpeaker = '';\nsentences.forEach(s => {\n  if (s.speaker_name !== curSpeaker) {\n    curSpeaker = s.speaker_name;\n    body += `\\n\\n**${curSpeaker || 'Speaker'}** \\`[${formatTime(s.start_time)}]\\`\\n`;\n  }\n  body += s.text + ' ';\n});\nconst md = `---\ntitle: \"${meta.title}\"\nchannel: \"${meta.channel}\"\nchannel_url: \"${meta.channelUrl}\"\nyoutube_url: \"${meta.youtubeUrl}\"\npublish_date: \"${meta.publishDate}\"\nduration: \"${meta.durationFormatted}\"\nview_count: ${meta.viewCount}\ntranscribed_at: \"${new Date().toISOString()}\"\nfolder: \"${folderName}\"\n---\n\n# ${meta.title}\n\n> **Channel:** ${meta.channel}  \n> **Published:** ${meta.publishDate}  \n> **Duration:** ${meta.durationFormatted}  \n> **Source:** ${meta.youtubeUrl}\n\n---\n\n## Transcript\n${body.trim()}\n`;\nreturn [{ json: { transcriptMd: md, folderName, meta, summary: transcript.summary, sentences } }];"
+      },
+      "id": "10",
+      "name": "Build Transcript MD",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1800, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "HTTP-Referer", "value": "https://github.com/DeveloperAlly/ai-and-agents" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={ \"model\": \"google/gemma-3-27b-it:free\", \"messages\": [{ \"role\": \"system\", \"content\": \"You are an expert content analyst. Extract structured insights from YouTube transcripts. Return ONLY valid JSON, no markdown fences, no preamble.\" }, { \"role\": \"user\", \"content\": \"Analyse this transcript and return JSON with: key_points (5-8 strings), winning_quotes (3-5 objects with {quote,speaker,context}), themes (3-5 strings), one_liner (single sentence under 25 words).\\n\\nTitle: {{ $('Build Transcript MD').first().json.meta.title }}\\n\\nTranscript:\\n{{ $('Build Transcript MD').first().json.transcriptMd.substring(0, 8000) }}\" }], \"temperature\": 0.3, \"max_tokens\": 2000 }"
+      },
+      "id": "11",
+      "name": "Extract Insights",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2000, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $('Extract Insights').first().json;\nconst content = raw.choices?.[0]?.message?.content || '{}';\nlet insights;\ntry { insights = JSON.parse(content.replace(/```json|```/g, '').trim()); }\ncatch(e) { insights = { key_points: [], winning_quotes: [], themes: [], one_liner: '' }; }\nconst summary = $('Build Transcript MD').first().json.summary;\nconst meta = $('Build Transcript MD').first().json.meta;\nconst folderName = $('Build Transcript MD').first().json.folderName;\nconst kp = insights.key_points?.map(p => `- ${p}`).join('\\n') || '';\nconst quotes = insights.winning_quotes?.map(q => `> \"${q.quote}\"\\n> — ${q.speaker || 'Unknown'}${q.context ? ` *(${q.context})*` : ''}`).join('\\n\\n') || '';\nconst themes = insights.themes?.map(t => `\\`${t}\\``).join(' · ') || '';\nconst kws = Array.isArray(summary?.keywords) ? summary.keywords.map(k => `\\`${k}\\``).join(' ') : '';\nconst summaryMd = `---\ntitle: \"${meta.title}\"\nchannel: \"${meta.channel}\"\nyoutube_url: \"${meta.youtubeUrl}\"\ngenerated_at: \"${new Date().toISOString()}\"\n---\n\n# Summary: ${meta.title}\n\n> ${insights.one_liner || summary?.overview || ''}\n\n**Channel:** ${meta.channel}  \n**Published:** ${meta.publishDate}  \n**Duration:** ${meta.durationFormatted}  \n${themes ? `**Themes:** ${themes}` : ''}\n\n---\n\n## Key Points\n\n${kp}\n\n---\n\n## Winning Quotes\n\n${quotes}\n\n---\n\n## Overview\n\n${summary?.overview || ''}\n\n${summary?.bullet_gist ? `## Bullet Points\\n\\n${summary.bullet_gist}` : ''}\n\n${kws ? `---\\n\\n**Keywords:** ${kws}` : ''}\n`;\nconst metaJson = JSON.stringify({\n  title: meta.title, channel: meta.channel, channelUrl: meta.channelUrl,\n  youtubeUrl: meta.youtubeUrl, publishDate: meta.publishDate,\n  duration: meta.durationFormatted, durationSeconds: meta.duration,\n  viewCount: meta.viewCount, thumbnailUrl: meta.thumbnailUrl,\n  description: meta.description, themes: insights.themes || [],\n  keywords: summary?.keywords || [], transcribedAt: new Date().toISOString(),\n  folderPath: `transcripts/${folderName}`\n}, null, 2);\nreturn [{ json: { summaryMd, metaJson, folderName, transcriptMd: $('Build Transcript MD').first().json.transcriptMd } }];"
+      },
+      "id": "12",
+      "name": "Build Summary MD",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2200, 200]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://api.github.com/repos/DeveloperAlly/ai-and-agents/contents/transcripts/{{ $json.folderName }}/transcript.md",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Accept", "value": "application/vnd.github+json" }, { "name": "X-GitHub-Api-Version", "value": "2022-11-28" }] },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={ \"message\": \"feat: add transcript.md\", \"content\": \"{{ Buffer.from($json.transcriptMd).toString('base64') }}\" }"
+      },
+      "id": "13",
+      "name": "Upload transcript.md",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2400, 100]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://api.github.com/repos/DeveloperAlly/ai-and-agents/contents/transcripts/{{ $('Build Summary MD').first().json.folderName }}/summary.md",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Accept", "value": "application/vnd.github+json" }, { "name": "X-GitHub-Api-Version", "value": "2022-11-28" }] },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={ \"message\": \"feat: add summary.md\", \"content\": \"{{ Buffer.from($('Build Summary MD').first().json.summaryMd).toString('base64') }}\" }"
+      },
+      "id": "14",
+      "name": "Upload summary.md",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2400, 220]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://api.github.com/repos/DeveloperAlly/ai-and-agents/contents/transcripts/{{ $('Build Summary MD').first().json.folderName }}/metadata.json",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Accept", "value": "application/vnd.github+json" }, { "name": "X-GitHub-Api-Version", "value": "2022-11-28" }] },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={ \"message\": \"feat: add metadata.json\", \"content\": \"{{ Buffer.from($('Build Summary MD').first().json.metaJson).toString('base64') }}\" }"
+      },
+      "id": "15",
+      "name": "Upload metadata.json",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2400, 340]
+    },
+    {
+      "parameters": {
+        "jsCode": "const folder = $('Build Summary MD').first().json.folderName;\nconst base = 'https://github.com/DeveloperAlly/ai-and-agents/blob/main/transcripts';\nreturn [{ json: {\n  success: true, folder,\n  files: {\n    transcript: `${base}/${folder}/transcript.md`,\n    summary: `${base}/${folder}/summary.md`,\n    metadata: `${base}/${folder}/metadata.json`,\n    audio: `${base}/${folder}/audio.mp3`\n  },\n  message: `Transcription complete for: ${$('Build Metadata').first().json.metadata.title}`\n}}];"
+      },
+      "id": "16",
+      "name": "Build Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2600, 220]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}"
+      },
+      "id": "17",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2800, 220]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.message || 'Unknown error' }) }}",
+        "options": { "responseCode": 400 }
+      },
+      "id": "18",
+      "name": "Error Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [400, 500]
+    }
+  ],
+  "connections": {
+    "Webhook": { "main": [[{ "node": "Validate URL", "type": "main", "index": 0 }]] },
+    "Validate URL": { "main": [[{ "node": "Get Video Info", "type": "main", "index": 0 }], [{ "node": "Error Response", "type": "main", "index": 0 }]] },
+    "Get Video Info": { "main": [[{ "node": "Download MP3", "type": "main", "index": 0 }]] },
+    "Download MP3": { "main": [[{ "node": "Build Metadata", "type": "main", "index": 0 }]] },
+    "Build Metadata": { "main": [[{ "node": "Upload MP3 to GitHub", "type": "main", "index": 0 }]] },
+    "Upload MP3 to GitHub": { "main": [[{ "node": "Submit to Fireflies", "type": "main", "index": 0 }]] },
+    "Submit to Fireflies": { "main": [[{ "node": "Wait for Transcription", "type": "main", "index": 0 }]] },
+    "Wait for Transcription": { "main": [[{ "node": "Fetch Transcript", "type": "main", "index": 0 }]] },
+    "Fetch Transcript": { "main": [[{ "node": "Build Transcript MD", "type": "main", "index": 0 }]] },
+    "Build Transcript MD": { "main": [[{ "node": "Extract Insights", "type": "main", "index": 0 }]] },
+    "Extract Insights": { "main": [[{ "node": "Build Summary MD", "type": "main", "index": 0 }]] },
+    "Build Summary MD": { "main": [[{ "node": "Upload transcript.md", "type": "main", "index": 0 }, { "node": "Upload summary.md", "type": "main", "index": 0 }, { "node": "Upload metadata.json", "type": "main", "index": 0 }]] },
+    "Upload transcript.md": { "main": [[{ "node": "Build Response", "type": "main", "index": 0 }]] },
+    "Upload summary.md": { "main": [[{ "node": "Build Response", "type": "main", "index": 0 }]] },
+    "Upload metadata.json": { "main": [[{ "node": "Build Response", "type": "main", "index": 0 }]] },
+    "Build Response": { "main": [[{ "node": "Respond to Webhook", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1", "saveManualExecutions": true },
+  "staticData": null,
+  "tags": [],
+  "pinData": {}
+}
